@@ -1,5 +1,7 @@
 # Luce Booking Refactor
 
+[![GitHub Actions CI](https://github.com/fxagro/luce/actions/workflows/ci.yml/badge.svg)](https://github.com/fxagro/luce/actions)
+
 A Ruby on Rails booking subsystem for an on-demand service platform, refactored for improved performance, maintainability, and observability.
 
 ## Repository Status
@@ -28,6 +30,48 @@ This project implements a booking subsystem similar to Luce (an on-demand servic
 - **Idempotency**: Client token-based duplicate request handling
 - **Comprehensive Logging**: Structured JSON logging for observability
 - **Metrics Collection**: Prometheus-style metrics for monitoring
+
+## Architecture Overview
+
+The following diagram illustrates the complete booking subsystem flow:
+
+```mermaid
+flowchart TD
+    A[Client] -->|POST /api/v1/bookings| B[BookingsController]
+    B -->|Delegates to| C[Booking::CreateBooking Service]
+    C -->|Validates & Creates| D[(PostgreSQL Database)]
+    D -->|Stores with 'pending' status| E[Booking Record]
+    C -->|Enqueues| F[Booking::MatchProviderJob]
+    F -->|Processes asynchronously| G[Sidekiq Worker]
+    G -->|Simulates API call| H[External Provider API]
+    H -->|Returns matching result| I{Success/Failure}
+    I -->|Updates status| J[Booking Status: confirmed/failed]
+    J -->|Increments counter| K[matching_attempts]
+    J -->|Updates metrics| L[$BOOKING_METRICS]
+    G -->|Logs events| M[Structured JSON Logs]
+    M -->|stdout/stderr| N[Log Aggregation]
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#e8f5e8
+    style D fill:#fce4ec
+    style F fill:#f3e5f5
+    style G fill:#fff3e0
+    style H fill:#e0f2f1
+    style L fill:#fff3e0
+    style M fill:#fce4ec
+```
+
+### Architecture Components
+
+- **Client**: Sends HTTP POST request to create booking
+- **BookingsController**: Receives request, validates parameters, delegates to service
+- **Booking::CreateBooking**: Service object handling business logic and validation
+- **PostgreSQL Database**: Stores booking records with unique constraints
+- **Booking::MatchProviderJob**: Sidekiq background job for provider matching
+- **External Provider API**: Simulated external service for provider availability
+- **Metrics**: In-memory counter tracking job performance (`$BOOKING_METRICS`)
+- **Structured Logs**: JSON-formatted logs for monitoring and debugging
 
 ## Architecture
 
@@ -276,6 +320,19 @@ The pipeline includes:
 - Code quality checks with RuboCop
 - Security scanning with Brakeman
 - Dependency auditing with Bundle Audit
+
+## Future Improvements
+
+This section outlines potential enhancements for scaling and improving the booking subsystem:
+
+### Database Sharding
+Implement database sharding to distribute booking data across multiple PostgreSQL instances based on customer_id or geographical regions. This approach would use Rails' built-in support for multiple databases combined with a sharding library like `octoshard` to automatically route queries to the appropriate shard. The implementation would require careful handling of cross-shard transactions and a shard key selection strategy that ensures even data distribution while maintaining query performance.
+
+### API Rate Limiting
+Add comprehensive API rate limiting using Redis-based sliding window algorithms to prevent abuse and ensure fair resource usage. The implementation would leverage Rack middleware like `rack-attack` with different rate limits for various endpoints (stricter limits for booking creation vs. status checks). This would include configurable limits per customer, IP address, or API key, with proper HTTP 429 responses and retry-after headers for exceeded limits.
+
+### Kafka Event Streaming
+Introduce Apache Kafka for event-driven architecture, streaming booking events to other services for real-time processing. The system would publish events like `booking.created`, `booking.confirmed`, and `provider.matched` to Kafka topics using a library like `karafka` or `racecar`. This would enable downstream services to react to booking state changes, implement complex event processing workflows, and maintain audit trails while decoupling the booking service from dependent systems.
 
 ## License
 
